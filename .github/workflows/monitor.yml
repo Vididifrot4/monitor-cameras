@@ -1,0 +1,40 @@
+   name: Monitor de cameras
+
+   on:
+     schedule:
+       - cron: "*/10 * * * *"
+     workflow_dispatch:
+
+   concurrency:
+     group: monitor
+     cancel-in-progress: false
+
+   jobs:
+     verificar:
+       runs-on: ubuntu-latest
+       timeout-minutes: 10
+       env:
+         TZ: America/Sao_Paulo
+         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+       steps:
+         - uses: actions/checkout@v5
+         - uses: actions/setup-python@v6
+           with:
+             python-version: "3.12"
+         - name: Instalar bibliotecas
+           run: pip install playwright numpy pillow requests
+         - name: Recuperar estado anterior
+           uses: actions/cache/restore@v4
+           with:
+             path: estado_cameras.json
+             key: estado-${{ github.run_id }}
+             restore-keys: estado-
+         - name: Verificar cameras
+           run: python monitor_cameras.py --once
+         - name: Salvar estado
+           if: always()
+           uses: actions/cache/save@v4
+           with:
+             path: estado_cameras.json
+             key: estado-${{ github.run_id }}-${{ github.run_attempt }}
