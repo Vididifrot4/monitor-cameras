@@ -258,6 +258,8 @@ def log(msg):
 
 
 def notify(text, image=None):
+    """Envia o alerta. Retorna True se pelo menos um canal confirmou o envio."""
+    ok = False
     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
         base = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
         try:
@@ -270,6 +272,7 @@ def notify(text, image=None):
                 r = requests.post(f"{base}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": text},
                                   timeout=30)
             if r.ok:
+                ok = True
                 log("  [Telegram] alerta enviado")
             else:
                 log(f"  [Telegram] erro {r.status_code}: {r.text[:300]}")
@@ -277,11 +280,12 @@ def notify(text, image=None):
             log(f"  [Telegram] falhou: {e}")
     if WEBHOOK_URL:
         try:
-            requests.post(WEBHOOK_URL, json={"content": text, "text": text}, timeout=30)
+            ok = requests.post(WEBHOOK_URL, json={"content": text, "text": text}, timeout=30).ok or ok
         except Exception as e:
             log(f"  [Webhook] falhou: {e}")
     if not (TELEGRAM_TOKEN or WEBHOOK_URL):
-        log(f"  [ALERTA] {text}")
+        log(f"  [ALERTA] {text}  (Telegram não configurado)")
+    return ok
 
 
 def load_state():
@@ -322,6 +326,28 @@ def update_and_alert(state, nome, result, frame):
         "desde": prev.get("desde") if not changed else datetime.now().isoformat(timespec="seconds"),
         "ultima_verificacao": datetime.now().isoformat(timespec="seconds"),
     }
+
+
+def daily_report(state):
+    """Manda um resumo por dia, no primeiro ciclo a partir de DAILY_REPORT_HOUR."""
+    if DAILY_REPORT_HOUR < 0:
+        return
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    meta = state.setdefault("_monitor", {})
+    if now.hour < DAILY_REPORT_HOUR:
+        return
+    if meta.get("ultimo_resumo") == today:
+        log(f"Resumo diário: já enviado hoje.")
+        return
+    linhas = [f"📋 Resumo diário – {now:%d/%m %H:%M}"]
+    for nome in CAMERAS:
+        st = state.get(nome, {}).get("status", "SEM DADOS")
+        linhas.append(f"{ICON.get(st, '❔')} {nome.split(' - ')[-1]}: {st}")
+    linhas.append("Monitor rodando normalmente.")
+    log("Resumo diário: enviando...")
+    if notify("\n".join(linhas)):
+        meta["ultimo_resumo"] = today   # só marca se chegou; senão tenta no próximo ciclo
 
 
 # ----------------------------------------------------------------- ciclo
@@ -377,6 +403,7 @@ def run_cycle(debug=False):
             update_and_alert(state, nome, result, frame)
 
         browser.close()
+    daily_report(state)
     save_state(state)
 
 
