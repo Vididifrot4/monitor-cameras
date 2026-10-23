@@ -62,6 +62,8 @@ ERROR_PATTERNS = re.compile(
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+CALLMEBOT_PHONE = os.getenv("CALLMEBOT_PHONE", "")         # WhatsApp, ex: 5511999998888
+CALLMEBOT_APIKEY = os.getenv("CALLMEBOT_APIKEY", "")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")                 # opcional (Discord etc.)
 
 USE_LLM = os.getenv("USE_LLM", "0") == "1"
@@ -278,13 +280,27 @@ def notify(text, image=None):
                 log(f"  [Telegram] erro {r.status_code}: {r.text[:300]}")
         except Exception as e:
             log(f"  [Telegram] falhou: {e}")
+    if CALLMEBOT_PHONE and CALLMEBOT_APIKEY:
+        try:
+            # o CallMeBot só envia texto (sem foto)
+            r = requests.get("https://api.callmebot.com/whatsapp.php",
+                             params={"phone": CALLMEBOT_PHONE, "text": text, "apikey": CALLMEBOT_APIKEY},
+                             timeout=60)
+            body = r.text.lower()
+            if r.ok and "error" not in body and "invalid" not in body:
+                ok = True
+                log("  [WhatsApp] alerta enviado")
+            else:
+                log(f"  [WhatsApp] erro {r.status_code}: {r.text[:300]}")
+        except Exception as e:
+            log(f"  [WhatsApp] falhou: {e}")
     if WEBHOOK_URL:
         try:
             ok = requests.post(WEBHOOK_URL, json={"content": text, "text": text}, timeout=30).ok or ok
         except Exception as e:
             log(f"  [Webhook] falhou: {e}")
-    if not (TELEGRAM_TOKEN or WEBHOOK_URL):
-        log(f"  [ALERTA] {text}  (Telegram não configurado)")
+    if not (TELEGRAM_TOKEN or CALLMEBOT_APIKEY or WEBHOOK_URL):
+        log(f"  [ALERTA] {text}  (nenhum canal configurado)")
     return ok
 
 
@@ -411,15 +427,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--once", action="store_true", help="executa um ciclo e sai")
     ap.add_argument("--debug", action="store_true", help="salva capturas em ./capturas")
-    ap.add_argument("--teste-telegram", action="store_true", help="envia uma mensagem de teste e sai")
+    ap.add_argument("--teste", "--teste-telegram", dest="teste", action="store_true",
+                    help="envia uma mensagem de teste para os canais configurados e sai")
     args = ap.parse_args()
 
-    if args.teste_telegram:
-        if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID):
-            log("TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID não definidos nesta janela.")
+    if args.teste:
+        if not ((TELEGRAM_TOKEN and TELEGRAM_CHAT_ID) or (CALLMEBOT_PHONE and CALLMEBOT_APIKEY) or WEBHOOK_URL):
+            log("Nenhum canal configurado (Telegram, WhatsApp ou webhook).")
             return
-        log(f"Enviando teste para o chat {TELEGRAM_CHAT_ID}...")
-        notify("✅ Teste do monitor de câmeras: o bot está funcionando.")
+        log("Enviando mensagem de teste...")
+        notify("✅ Teste do monitor de câmeras: os alertas estão funcionando.")
         return
     if args.once:
         run_cycle(args.debug)
